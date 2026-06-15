@@ -3,15 +3,52 @@
 	"version": "1.0.0",
 	"main": "index.js",
 	"scripts": {
-		"start": "electron ."
+		"start": "electron .",
+		"pack": "electron-builder --dir",
+		"dist": "electron-builder"
 	},
-	"author": "factiiv",
+	"author": "klikbase <connect@klikbase.com>",
 	"license": "ISC",
-	"description": "",
-	"devDependencies": {
-		"electron": "^41.7.1"
-	},
+	"description": "Klikbase Time Tracking Client",
 	"dependencies": {
 		"active-win": "^8.2.1"
+	},
+	"devDependencies": {
+		"electron": "^41.7.1",
+		"electron-builder": "^24.13.3"
+	},
+	"build": {
+		"appId": "com.factiiv.klikbase",
+		"productName": "Klikbase Tracker",
+		"files": [
+			"index.js",
+			"preload.cjs",
+			"package.json",
+			"node_modules/**/*",
+			"dist/**/*"
+		],
+		"directories": {
+			"output": "release"
+		},
+		"win": {
+			"target": [
+				"nsis"
+			],
+			"icon": "build/icon.png"
+		},
+		"mac": {
+			"target": [
+				"dmg"
+			],
+			"category": "public.app-category.utilities",
+			"icon": "build/icon.png"
+		},
+		"linux": {
+			"target": [
+				"AppImage",
+				"deb"
+			],
+			"icon": "build/icon.png"
+		}
 	}
 }

@@ -29,12 +29,11 @@ function createWindow() {
 			nodeIntegration: false,
 		},
 		autoHideMenuBar: true,
+		icon: path.join(__dirname, "build", "icon.png"),
 	});
 
-	// Open DevTools in development only
 	if (isDev) mainWindow.webContents.openDevTools();
 
-	// Load Vite dev server in dev, built files in production
 	if (isDev) {
 		mainWindow.loadURL("http://localhost:5173");
 	} else {
