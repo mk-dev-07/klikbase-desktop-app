@@ -18,11 +18,17 @@ const isDev = !app.isPackaged;
 
 // ─── Window Creation ──────────────────────────────────────────────────────────
 function createWindow() {
+	const primaryDisplay = screen.getPrimaryDisplay();
+	const { x, y } = primaryDisplay.workArea;
+
 	mainWindow = new BrowserWindow({
-		width: 950,
-		height: 750,
-		minWidth: 400,
+		x: x,
+		y: y,
+		width: 1920,
+		height: 1012,
+		minWidth: 690,
 		minHeight: 600,
+		show: false,
 		webPreferences: {
 			preload: path.join(__dirname, "preload.cjs"),
 			contextIsolation: true,
@@ -30,6 +36,11 @@ function createWindow() {
 		},
 		autoHideMenuBar: true,
 		icon: path.join(__dirname, "build", "icon.png"),
+	});
+
+	mainWindow.once("ready-to-show", () => {
+		mainWindow.show();
+		mainWindow.maximize();
 	});
 
 	if (isDev) mainWindow.webContents.openDevTools();
@@ -57,117 +68,192 @@ function cleanup() {
 	}
 }
 
-// ─── App Ready ───────────────────────────────────────────────────────────────
-app.setName("Klikbase");
+const gotTheLock = app.requestSingleInstanceLock();
 
-app.whenReady().then(() => {
-	createWindow();
+if (!gotTheLock) {
+	app.exit(0);
+} else {
+	app.on("second-instance", (event, commandLine, workingDirectory) => {
+		if (mainWindow) {
+			if (mainWindow.isMinimized()) mainWindow.restore();
+			mainWindow.focus();
+		}
+	});
 
-	// ─── Screenshot Handler ───────────────────────────────────────────────────
-	ipcMain.handle("take-screenshot", async () => {
-		try {
-			// ─── Linux Wayland Guard ──────────────────────────────────────────────
-			if (process.platform === "linux") {
-				const isWayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
-				if (isWayland) {
-					throw new Error("Silent screenshots are not supported on Wayland.");
+	app.setName("Klikbase");
+
+	app.whenReady().then(() => {
+		createWindow();
+
+		// ─── Screenshot Handler ───────────────────────────────────────────────────
+		ipcMain.handle("take-screenshot", async () => {
+			try {
+				// ─── Linux Wayland Guard ──────────────────────────────────────────────
+				if (process.platform === "linux") {
+					const isWayland =
+						process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
+					if (isWayland) {
+						throw new Error("Silent screenshots are not supported on Wayland.");
+					}
+				}
+
+				// ─── macOS Permission Checks ──────────────────────────────────────────
+				if (process.platform === "darwin") {
+					const screenStatus = systemPreferences.getMediaAccessStatus("screen");
+					if (screenStatus !== "granted") {
+						throw new Error("macOS Screen Recording permission denied.");
+					}
+					if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+						console.warn(
+							"⚠️ macOS Accessibility permission missing. Active window data may fail.",
+						);
+					}
+				}
+
+				const sources = await desktopCapturer.getSources({
+					types: ["screen"],
+					thumbnailSize: { width: 1920, height: 1080 },
+				});
+
+				const primaryDisplayId = screen.getPrimaryDisplay().id.toString();
+				const primarySource = sources.find((s) => s.display_id === primaryDisplayId) || sources[0];
+
+				if (!primarySource) throw new Error("Could not find primary screen source.");
+
+				const base64Image = primarySource.thumbnail.toDataURL();
+				const { default: activeWin } = await import("active-win");
+				const activeWindowData = await activeWin();
+
+				return {
+					success: true,
+					image: base64Image,
+					activeWindow: activeWindowData?.title || "Unknown Window",
+					windowApp: activeWindowData?.owner?.name || "Unknown App",
+				};
+			} catch (error) {
+				console.error("❌ Screenshot capture failed:", error);
+				return { success: false, error: error.message };
+			}
+		});
+
+		// ─── Idle Time Handler ────────────────────────────────────────────────────
+		ipcMain.handle("get-idle-time", () => {
+			return powerMonitor.getSystemIdleTime();
+		});
+
+		// ─── Notification Handler ─────────────────────────────────────────────────
+		ipcMain.on("show-notification", (event, { title, body }) => {
+			if (!Notification.isSupported()) {
+				console.warn("❌ Notifications not supported on this system.");
+				return;
+			}
+			try {
+				new Notification({ title, body }).show();
+			} catch (err) {
+				console.error("❌ Notification failed:", err);
+			}
+		});
+
+		// ─── Break Event Handler ──────────────────────────────────────────────────
+		ipcMain.on("break-event", (event, data) => {
+			console.log(`🔔 Break event: ${data.action}${data.breakType ? ` (${data.breakType})` : ""}`);
+		});
+
+		// ─── System Events → Idle Break ───────────────────────────────────────────
+		powerMonitor.on("suspend", () => {
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send("idle-break-started");
+			}
+		});
+
+		powerMonitor.on("lock-screen", () => {
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				mainWindow.webContents.send("idle-break-started");
+			}
+		});
+
+		// ─── Idle Polling ─────────────────────────────────────────────────────────
+		idleInterval = setInterval(() => {
+			const idleTimeSeconds = powerMonitor.getSystemIdleTime();
+
+			if (idleTimeSeconds >= 300) {
+				if (!isUserCurrentlyIdle) {
+					isUserCurrentlyIdle = true;
+					if (mainWindow && !mainWindow.isDestroyed()) {
+						mainWindow.webContents.send("idle-break-started");
+					}
+				}
+			} else {
+				if (isUserCurrentlyIdle) {
+					isUserCurrentlyIdle = false;
+					if (mainWindow && !mainWindow.isDestroyed()) {
+						mainWindow.webContents.send("system-active-again");
+					}
 				}
 			}
+		}, 5000);
 
-			// ─── macOS Permission Checks ──────────────────────────────────────────
-			if (process.platform === "darwin") {
-				const screenStatus = systemPreferences.getMediaAccessStatus("screen");
-				if (screenStatus !== "granted") {
-					throw new Error("macOS Screen Recording permission denied.");
-				}
-				if (!systemPreferences.isTrustedAccessibilityClient(false)) {
-					console.warn("⚠️ macOS Accessibility permission missing. Active window data may fail.");
-				}
-			}
+		ipcMain.handle("open-google-auth-window", async (event, authUrl) => {
+			return new Promise((resolve) => {
+				let isResolved = false;
 
-			const sources = await desktopCapturer.getSources({
-				types: ["screen"],
-				thumbnailSize: { width: 1920, height: 1080 },
+				const authWindow = new BrowserWindow({
+					width: 500,
+					height: 650,
+					show: true,
+					alwaysOnTop: true,
+					webPreferences: {
+						nodeIntegration: false,
+						contextIsolation: true,
+					},
+				});
+
+				authWindow.loadURL(authUrl);
+
+				const handleNavigation = (url) => {
+					try {
+						const parsedUrl = new URL(url);
+
+						if (parsedUrl.searchParams.has("token")) {
+							if (!isResolved) {
+								isResolved = true;
+								resolve({ token: parsedUrl.searchParams.get("token") });
+								authWindow.close();
+							}
+						} else if (parsedUrl.searchParams.has("error")) {
+							if (!isResolved) {
+								isResolved = true;
+								const errorMsg =
+									parsedUrl.searchParams.get("message") || "Authentication failed";
+								resolve({ error: errorMsg });
+								authWindow.close();
+							}
+						}
+					} catch (err) {}
+				};
+
+				authWindow.webContents.on("will-redirect", (event, url) => {
+					handleNavigation(url);
+				});
+
+				authWindow.webContents.on("did-navigate", (event, url) => {
+					handleNavigation(url);
+				});
+
+				authWindow.on("closed", () => {
+					if (!isResolved) {
+						isResolved = true;
+						resolve({ error: "Login window was closed by the user." });
+					}
+				});
 			});
+		});
 
-			const primaryDisplayId = screen.getPrimaryDisplay().id.toString();
-			const primarySource = sources.find((s) => s.display_id === primaryDisplayId) || sources[0];
-
-			if (!primarySource) throw new Error("Could not find primary screen source.");
-
-			const base64Image = primarySource.thumbnail.toDataURL();
-			const { default: activeWin } = await import("active-win");
-			const activeWindowData = await activeWin();
-
-			return {
-				success: true,
-				image: base64Image,
-				activeWindow: activeWindowData?.title || "Unknown Window",
-				windowApp: activeWindowData?.owner?.name || "Unknown App",
-			};
-		} catch (error) {
-			console.error("❌ Screenshot capture failed:", error);
-			return { success: false, error: error.message };
-		}
+		app.on("activate", () => {
+			if (BrowserWindow.getAllWindows().length === 0) createWindow();
+		});
 	});
-
-	// ─── Idle Time Handler ────────────────────────────────────────────────────
-	ipcMain.handle("get-idle-time", () => {
-		return powerMonitor.getSystemIdleTime();
-	});
-
-	// ─── Notification Handler ─────────────────────────────────────────────────
-	ipcMain.on("show-notification", (event, { title, body }) => {
-		if (!Notification.isSupported()) {
-			console.warn("❌ Notifications not supported on this system.");
-			return;
-		}
-		try {
-			new Notification({ title, body }).show();
-		} catch (err) {
-			console.error("❌ Notification failed:", err);
-		}
-	});
-
-	// ─── Break Event Handler ──────────────────────────────────────────────────
-	ipcMain.on("break-event", (event, data) => {
-		console.log(`🔔 Break event: ${data.action}${data.breakType ? ` (${data.breakType})` : ""}`);
-	});
-
-	// ─── System Events → Idle Break ───────────────────────────────────────────
-	powerMonitor.on("suspend", () => {
-		console.log("💤 System suspended.");
-		if (mainWindow) mainWindow.webContents.send("idle-break-started");
-	});
-
-	powerMonitor.on("lock-screen", () => {
-		console.log("🔒 Screen locked.");
-		if (mainWindow) mainWindow.webContents.send("idle-break-started");
-	});
-
-	// ─── Idle Polling ─────────────────────────────────────────────────────────
-	idleInterval = setInterval(() => {
-		const idleTimeSeconds = powerMonitor.getSystemIdleTime();
-
-		if (idleTimeSeconds >= 300) {
-			if (!isUserCurrentlyIdle) {
-				isUserCurrentlyIdle = true;
-				console.log("🎯 User idle 5+ mins. Triggering break...");
-				if (mainWindow) mainWindow.webContents.send("idle-break-started");
-			}
-		} else {
-			if (isUserCurrentlyIdle) {
-				isUserCurrentlyIdle = false;
-				console.log("👋 User returned from idle.");
-				if (mainWindow) mainWindow.webContents.send("system-active-again");
-			}
-		}
-	}, 5000);
-
-	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow();
-	});
-});
+}
 
 // ─── Quit ─────────────────────────────────────────────────────────────────────
 app.on("window-all-closed", () => {

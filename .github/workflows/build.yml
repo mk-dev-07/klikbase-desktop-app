@@ -28,6 +28,7 @@ jobs:
             - name: Install & Package Electron App
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  CSC_IDENTITY_AUTO_DISCOVERY: false
               run: |
                   npm install
                   npm run dist

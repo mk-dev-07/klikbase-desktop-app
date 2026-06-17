@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
+	// ─── Screenshot & Idle ──────────────────────────────────────────────
 	takeScreenshot: () => ipcRenderer.invoke("take-screenshot"),
 	getIdleTime: () => ipcRenderer.invoke("get-idle-time"),
 	sendBreakEvent: (data) => ipcRenderer.send("break-event", data),
@@ -18,4 +19,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("system-active-again", listener);
 		return () => ipcRenderer.removeListener("system-active-again", listener);
 	},
+
+	// ─── Google Auth ────────────────────────────────────────────────────
+	openGoogleAuthWindow: (authUrl) => ipcRenderer.invoke("open-google-auth-window", authUrl),
 });

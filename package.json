@@ -1,11 +1,12 @@
 {
 	"name": "klikbase-time-tracker",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"main": "index.js",
 	"scripts": {
 		"start": "electron .",
 		"pack": "electron-builder --dir",
-		"dist": "electron-builder"
+		"dist": "electron-builder",
+		"postinstall": "electron-builder install-app-deps"
 	},
 	"author": "klikbase <connect@klikbase.com>",
 	"license": "ISC",
@@ -38,10 +39,17 @@
 		},
 		"mac": {
 			"target": [
-				"dmg"
+				{
+					"target": "dmg",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				}
 			],
 			"category": "public.app-category.utilities",
-			"icon": "build/icon.png"
+			"icon": "build/icon.png",
+			"identity": null
 		},
 		"linux": {
 			"target": [
