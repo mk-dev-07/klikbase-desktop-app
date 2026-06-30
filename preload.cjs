@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
-	// ─── Screenshot & Idle ──────────────────────────────────────────────
+	/* ---------------------------- Screenshot & Idle --------------------------- */
 	takeScreenshot: () => ipcRenderer.invoke("take-screenshot"),
 	getIdleTime: () => ipcRenderer.invoke("get-idle-time"),
 	sendBreakEvent: (data) => ipcRenderer.send("break-event", data),
@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		return () => ipcRenderer.removeListener("system-active-again", listener);
 	},
 
-	// ─── Google Auth ────────────────────────────────────────────────────
+	/* ------------------------------- Google Auth ------------------------------ */
 	openGoogleAuthWindow: (authUrl) => ipcRenderer.invoke("open-google-auth-window", authUrl),
+
+	/* ------------------------------- Auto update ------------------------------ */
+	// onUpdateAvailable: (cb) => ipcRenderer.on("update-available", (_, data) => cb(data)),
+	// onUpdateDownloaded: (cb) => ipcRenderer.on("update-downloaded", () => cb()),
+	// restartAndInstall: () => ipcRenderer.send("restart-and-install"),
+	// onUpdateError: (cb) => ipcRenderer.on("update-error", (_, data) => cb(data)),
+	// onUpdateProgress: (cb) => ipcRenderer.on("update-download-progress", (_, data) => cb(data)),
 });

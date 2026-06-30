@@ -9,6 +9,7 @@ const {
 	Notification,
 } = require("electron");
 const path = require("path");
+// const { setupUpdater } = require("./updater");
 
 let mainWindow;
 let idleInterval;
@@ -68,9 +69,9 @@ function cleanup() {
 	}
 }
 
-const gotTheLock = app.requestSingleInstanceLock();
+const hasLock = isDev ? true : app.requestSingleInstanceLock();
 
-if (!gotTheLock) {
+if (!hasLock) {
 	app.exit(0);
 } else {
 	app.on("second-instance", (event, commandLine, workingDirectory) => {
@@ -84,6 +85,11 @@ if (!gotTheLock) {
 
 	app.whenReady().then(() => {
 		createWindow();
+
+		// ─── Update Handler ───────────────────────────────────────────────────────
+		// mainWindow.webContents.on("did-finish-load", () => {
+		// 	setupUpdater(mainWindow);
+		// });
 
 		// ─── Screenshot Handler ───────────────────────────────────────────────────
 		ipcMain.handle("take-screenshot", async () => {
