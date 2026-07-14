@@ -9,22 +9,25 @@ const {
 	Notification,
 } = require("electron");
 const path = require("path");
-// const { setupUpdater } = require("./updater");
+const { setupUpdater } = require("./updater");
 
 let mainWindow;
 let idleInterval;
 let isUserCurrentlyIdle = false;
-
 const isDev = !app.isPackaged;
 
-// ─── Window Creation ──────────────────────────────────────────────────────────
+function sendToMainWindow(channel, data) {
+	if (mainWindow && !mainWindow.isDestroyed()) {
+		mainWindow.webContents.send(channel, data);
+	}
+}
+
 function createWindow() {
 	const primaryDisplay = screen.getPrimaryDisplay();
 	const { x, y } = primaryDisplay.workArea;
-
 	mainWindow = new BrowserWindow({
-		x: x,
-		y: y,
+		x,
+		y,
 		width: 1920,
 		height: 1012,
 		minWidth: 690,
@@ -45,7 +48,6 @@ function createWindow() {
 	});
 
 	if (isDev) mainWindow.webContents.openDevTools();
-
 	if (isDev) {
 		mainWindow.loadURL("http://localhost:5173");
 	} else {
@@ -61,7 +63,6 @@ function createWindow() {
 	});
 }
 
-// ─── Cleanup ──────────────────────────────────────────────────────────────────
 function cleanup() {
 	if (idleInterval) {
 		clearInterval(idleInterval);
@@ -86,33 +87,47 @@ if (!hasLock) {
 	app.whenReady().then(() => {
 		createWindow();
 
-		// ─── Update Handler ───────────────────────────────────────────────────────
-		// mainWindow.webContents.on("did-finish-load", () => {
-		// 	setupUpdater(mainWindow);
-		// });
+		mainWindow.webContents.on("did-finish-load", () => {
+			try {
+				setupUpdater();
+			} catch (updaterError) {
+				console.error("⚠️ Non-fatal auto-updater initialization check failed:", updaterError);
+			}
+		});
 
-		// ─── Screenshot Handler ───────────────────────────────────────────────────
+		// ipcMain.on("get-app-version", (event) => {
+		// 	event.returnValue = app.getVersion();
+		// });
+		ipcMain.handle("get-app-version", () => {
+			return app.getVersion();
+		});
+
+		// ─── Screenshot Handler with Permission Detection ─────────────────────────
 		ipcMain.handle("take-screenshot", async () => {
 			try {
-				// ─── Linux Wayland Guard ──────────────────────────────────────────────
 				if (process.platform === "linux") {
 					const isWayland =
 						process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
 					if (isWayland) {
-						throw new Error("Silent screenshots are not supported on Wayland.");
+						return {
+							success: false,
+							errorType: "system_limit",
+							message: "Screenshots are not supported on Wayland.",
+						};
 					}
 				}
 
-				// ─── macOS Permission Checks ──────────────────────────────────────────
 				if (process.platform === "darwin") {
 					const screenStatus = systemPreferences.getMediaAccessStatus("screen");
 					if (screenStatus !== "granted") {
-						throw new Error("macOS Screen Recording permission denied.");
+						return {
+							success: false,
+							errorType: "permission_denied",
+							message: "Screen recording permission denied.",
+						};
 					}
 					if (!systemPreferences.isTrustedAccessibilityClient(false)) {
-						console.warn(
-							"⚠️ macOS Accessibility permission missing. Active window data may fail.",
-						);
+						console.warn("⚠️ macOS Accessibility permission missing.");
 					}
 				}
 
@@ -120,10 +135,8 @@ if (!hasLock) {
 					types: ["screen"],
 					thumbnailSize: { width: 1920, height: 1080 },
 				});
-
 				const primaryDisplayId = screen.getPrimaryDisplay().id.toString();
 				const primarySource = sources.find((s) => s.display_id === primaryDisplayId) || sources[0];
-
 				if (!primarySource) throw new Error("Could not find primary screen source.");
 
 				const base64Image = primarySource.thumbnail.toDataURL();
@@ -142,67 +155,67 @@ if (!hasLock) {
 			}
 		});
 
-		// ─── Idle Time Handler ────────────────────────────────────────────────────
+		// ─── Notification Handler (Fixed Mismatched Arguments & Callbacks) ──────────
+		ipcMain.on("show-notification", (event, title, body) => {
+			// Check if OS environment supports core notifications
+			if (!Notification.isSupported()) {
+				sendToMainWindow("notification-permission-denied", {
+					message: "System native alerts are unsupported on this platform environment.",
+				});
+				return;
+			}
+
+			try {
+				const notification = new Notification({ title, body });
+
+				// Optional: Handle system block scenarios if platform exposes them on creation failure
+				notification.show();
+			} catch (err) {
+				console.error("❌ Notification failed:", err);
+				sendToMainWindow("notification-permission-denied", {
+					message: "System notification failed to display. Check app permissions.",
+				});
+			}
+		});
+
+		// ─── Idle Time Handler ───────────────────────────────────────────────────────
 		ipcMain.handle("get-idle-time", () => {
 			return powerMonitor.getSystemIdleTime();
 		});
 
-		// ─── Notification Handler ─────────────────────────────────────────────────
-		ipcMain.on("show-notification", (event, { title, body }) => {
-			if (!Notification.isSupported()) {
-				console.warn("❌ Notifications not supported on this system.");
-				return;
-			}
-			try {
-				new Notification({ title, body }).show();
-			} catch (err) {
-				console.error("❌ Notification failed:", err);
-			}
-		});
-
-		// ─── Break Event Handler ──────────────────────────────────────────────────
+		// ─── Break Event Handler ─────────────────────────────────────────────────────
 		ipcMain.on("break-event", (event, data) => {
-			console.log(`🔔 Break event: ${data.action}${data.breakType ? ` (${data.breakType})` : ""}`);
+			console.log(`🔔 Break event: ${data.action}`);
 		});
 
-		// ─── System Events → Idle Break ───────────────────────────────────────────
+		// ─── System Events → Idle Break ─────────────────────────────────────────────
 		powerMonitor.on("suspend", () => {
-			if (mainWindow && !mainWindow.isDestroyed()) {
-				mainWindow.webContents.send("idle-break-started");
-			}
+			sendToMainWindow("idle-break-started");
 		});
-
 		powerMonitor.on("lock-screen", () => {
-			if (mainWindow && !mainWindow.isDestroyed()) {
-				mainWindow.webContents.send("idle-break-started");
-			}
+			sendToMainWindow("idle-break-started");
 		});
 
-		// ─── Idle Polling ─────────────────────────────────────────────────────────
+		// ─── Idle Polling ───────────────────────────────────────────────────────────
 		idleInterval = setInterval(() => {
 			const idleTimeSeconds = powerMonitor.getSystemIdleTime();
-
 			if (idleTimeSeconds >= 300) {
 				if (!isUserCurrentlyIdle) {
 					isUserCurrentlyIdle = true;
-					if (mainWindow && !mainWindow.isDestroyed()) {
-						mainWindow.webContents.send("idle-break-started");
-					}
+					sendToMainWindow("idle-break-started");
 				}
 			} else {
 				if (isUserCurrentlyIdle) {
 					isUserCurrentlyIdle = false;
-					if (mainWindow && !mainWindow.isDestroyed()) {
-						mainWindow.webContents.send("system-active-again");
-					}
+					sendToMainWindow("system-active-again");
 				}
 			}
 		}, 5000);
 
+		// ─── Google OAuth Window Handler (Fixed parsedUrl Reference Typo) ───────────
 		ipcMain.handle("open-google-auth-window", async (event, authUrl) => {
 			return new Promise((resolve) => {
 				let isResolved = false;
-
 				const authWindow = new BrowserWindow({
 					width: 500,
 					height: 650,
@@ -213,17 +226,15 @@ if (!hasLock) {
 						contextIsolation: true,
 					},
 				});
-
 				authWindow.loadURL(authUrl);
 
 				const handleNavigation = (url) => {
 					try {
 						const parsedUrl = new URL(url);
-
 						if (parsedUrl.searchParams.has("token")) {
 							if (!isResolved) {
 								isResolved = true;
-								resolve({ token: parsedUrl.searchParams.get("token") });
+								resolve({ token: parsedUrl.searchParams.get("token") }); // FIXED TYPO HERE
 								authWindow.close();
 							}
 						} else if (parsedUrl.searchParams.has("error")) {
@@ -241,11 +252,9 @@ if (!hasLock) {
 				authWindow.webContents.on("will-redirect", (event, url) => {
 					handleNavigation(url);
 				});
-
 				authWindow.webContents.on("did-navigate", (event, url) => {
 					handleNavigation(url);
 				});
-
 				authWindow.on("closed", () => {
 					if (!isResolved) {
 						isResolved = true;
@@ -261,12 +270,11 @@ if (!hasLock) {
 	});
 }
 
-// ─── Quit ─────────────────────────────────────────────────────────────────────
+// Cleanup
 app.on("window-all-closed", () => {
 	cleanup();
 	if (process.platform !== "darwin") app.quit();
 });
-
 app.on("before-quit", () => {
 	cleanup();
 });

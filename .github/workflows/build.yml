@@ -29,15 +29,22 @@ jobs:
                   node-version: 20
                   cache: "npm"
 
-            - name: Install & Package Electron App
+            - name: Install Dependencies
+              run: npm install
+
+            - name: Package & Publish Electron App
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  CSC_IDENTITY_AUTO_DISCOVERY: false
-              run: |
-                  npm install
-                  npm run dist -- --publish always
 
-            - name: Upload Installers as Artifacts
+                  CSC_LINK: ${{ secrets.CSC_LINK }}
+                  CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+                  APPLE_ID: ${{ secrets.APPLE_ID }}
+                  APPLE_ID_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+              run: npm run dist -- --publish always
+
+            - name: Upload Installers & Update Metadata
               uses: actions/upload-artifact@v4
               with:
                   name: installers-${{ matrix.os }}
@@ -46,4 +53,5 @@ jobs:
                       release/*.dmg
                       release/*.deb
                       release/*.AppImage
+                      release/*.yml
                   retention-days: 7
