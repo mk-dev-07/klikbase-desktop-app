@@ -102,10 +102,8 @@ if (!hasLock) {
 
 		// ─── Download File Handler ───────────────────────────────────────────────
 		ipcMain.on("download-file", (event, url) => {
-			const win = BrowserWindow.getFocusedWindow();
-			if (win) {
-				win.webContents.downloadURL(url);
-			}
+			const win = BrowserWindow.fromWebContents(event.sender);
+			if (win) win.webContents.downloadURL(url);
 		});
 
 		// ─── Screenshot Handler with Permission Detection ─────────────────────────

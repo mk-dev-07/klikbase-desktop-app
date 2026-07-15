@@ -4,8 +4,11 @@ const { ipcMain, app, BrowserWindow } = require("electron");
 let isListenerRegistered = false;
 
 function getMainWindow() {
+	const focusedWindow = BrowserWindow.getFocusedWindow();
+	if (focusedWindow && !focusedWindow.isDestroyed()) return focusedWindow;
+
 	const windows = BrowserWindow.getAllWindows();
-	return windows.find((w) => !w.isDestroyed() && w.webContents.isActive()) || windows[0];
+	return windows.find((w) => !w.isDestroyed()) || null;
 }
 
 function setupUpdater() {

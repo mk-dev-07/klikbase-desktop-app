@@ -39,27 +39,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		return () => ipcRenderer.removeListener("update-available", listener);
 	},
 
-	onUpdateAvailable: (cb) => {
-		const listener = (_, data) => cb(data);
-		ipcRenderer.on("update-available", listener);
-		return () => ipcRenderer.removeListener("update-available", listener);
-	},
-	onUpdateDownloaded: (cb) => {
-		const listener = () => cb();
-		ipcRenderer.on("update-downloaded", listener);
-		return () => ipcRenderer.removeListener("update-downloaded", listener);
-	},
-	restartAndInstall: () => ipcRenderer.send("restart-and-install"),
-	onUpdateError: (cb) => {
-		const listener = (_, data) => cb(data);
-		ipcRenderer.on("update-error", listener);
-		return () => ipcRenderer.removeListener("update-error", listener);
-	},
 	onUpdateProgress: (cb) => {
 		const listener = (_, data) => cb(data);
 		ipcRenderer.on("update-download-progress", listener);
 		return () => ipcRenderer.removeListener("update-download-progress", listener);
 	},
+
+	onUpdateDownloaded: (cb) => {
+		const listener = (_, data) => cb(data);
+		ipcRenderer.on("update-download-Downloaded", listener);
+		ipcRenderer.on("update-downloaded", listener);
+		return () => ipcRenderer.removeListener("update-downloaded", listener);
+	},
+
+	onUpdateError: (cb) => {
+		const listener = (_, data) => cb(data);
+		ipcRenderer.on("update-error", listener);
+		return () => ipcRenderer.removeListener("update-error", listener);
+	},
+
+	restartAndInstall: () => ipcRenderer.send("restart-and-install"),
 
 	/* ------------ bypass firebase cors issue for downloading image ------------ */
 	downloadFile: (url) => ipcRenderer.send("download-file", url),
