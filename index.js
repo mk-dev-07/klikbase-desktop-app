@@ -95,11 +95,17 @@ if (!hasLock) {
 			}
 		});
 
-		// ipcMain.on("get-app-version", (event) => {
-		// 	event.returnValue = app.getVersion();
-		// });
+		// ─── App Version Handler ─────────────────────────────────────────────────
 		ipcMain.handle("get-app-version", () => {
 			return app.getVersion();
+		});
+
+		// ─── Download File Handler ───────────────────────────────────────────────
+		ipcMain.on("download-file", (event, url) => {
+			const win = BrowserWindow.getFocusedWindow();
+			if (win) {
+				win.webContents.downloadURL(url);
+			}
 		});
 
 		// ─── Screenshot Handler with Permission Detection ─────────────────────────

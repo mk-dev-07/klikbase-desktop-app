@@ -60,4 +60,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("update-download-progress", listener);
 		return () => ipcRenderer.removeListener("update-download-progress", listener);
 	},
+
+	/* ------------ bypass firebase cors issue for downloading image ------------ */
+	downloadFile: (url) => ipcRenderer.send("download-file", url),
 });
