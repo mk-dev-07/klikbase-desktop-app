@@ -37,6 +37,7 @@ function createWindow() {
 			preload: path.join(__dirname, "preload.cjs"),
 			contextIsolation: true,
 			nodeIntegration: false,
+			backgroundThrottling: false,
 		},
 		autoHideMenuBar: true,
 		icon: path.join(__dirname, "build", "icon.png"),
@@ -45,6 +46,14 @@ function createWindow() {
 	mainWindow.once("ready-to-show", () => {
 		mainWindow.show();
 		mainWindow.maximize();
+	});
+
+	mainWindow.on("focus", () => {
+		sendToMainWindow("app-focused");
+	});
+
+	mainWindow.on("restore", () => {
+		sendToMainWindow("app-focused");
 	});
 
 	if (isDev) mainWindow.webContents.openDevTools();
@@ -85,15 +94,13 @@ if (!hasLock) {
 	app.setName("Klikbase");
 
 	app.whenReady().then(() => {
-		createWindow();
+		try {
+			setupUpdater();
+		} catch (updaterError) {
+			console.error("⚠️ Non-fatal auto-updater initialization check failed:", updaterError);
+		}
 
-		mainWindow.webContents.on("did-finish-load", () => {
-			try {
-				setupUpdater();
-			} catch (updaterError) {
-				console.error("⚠️ Non-fatal auto-updater initialization check failed:", updaterError);
-			}
-		});
+		createWindow();
 
 		// ─── App Version Handler ─────────────────────────────────────────────────
 		ipcMain.handle("get-app-version", () => {

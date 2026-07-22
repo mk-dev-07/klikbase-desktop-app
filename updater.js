@@ -5,18 +5,41 @@ let isListenerRegistered = false;
 
 function getMainWindow() {
 	const focusedWindow = BrowserWindow.getFocusedWindow();
-	if (focusedWindow && !focusedWindow.isDestroyed()) return focusedWindow;
+
+	if (
+		focusedWindow &&
+		!focusedWindow.isDestroyed() &&
+		focusedWindow.webContents &&
+		!focusedWindow.webContents.isDestroyed()
+	) {
+		return focusedWindow;
+	}
 
 	const windows = BrowserWindow.getAllWindows();
-	return windows.find((w) => !w.isDestroyed()) || null;
+
+	return windows.find((w) => !w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) || null;
 }
 
 function setupUpdater() {
 	// ─── Configure Updater ────────────────────────────────────────────────────
-	autoUpdater.autoDownload = true;
+	autoUpdater.autoDownload = false;
 	autoUpdater.autoInstallOnAppQuit = true;
 
 	autoUpdater.logger = console;
+
+	if (!isListenerRegistered) {
+		isListenerRegistered = true;
+
+		ipcMain.on("restart-and-install", () => {
+			app.isQuitting = true;
+			autoUpdater.quitAndInstall(false, true);
+		});
+
+		// Listen for the user clicking "Download"
+		ipcMain.on("start-download", () => {
+			autoUpdater.downloadUpdate();
+		});
+	}
 
 	// ─── Error Handling ───────────────────────────────────────────────────────
 	autoUpdater.on("error", (err) => {

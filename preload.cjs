@@ -59,7 +59,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 
 	restartAndInstall: () => ipcRenderer.send("restart-and-install"),
+	startDownload: () => ipcRenderer.send("start-download"),
 
 	/* ------------ bypass firebase cors issue for downloading image ------------ */
 	downloadFile: (url) => ipcRenderer.send("download-file", url),
+
+	/* -------------------- update the app when user opens it ------------------- */
+	onAppFocused: (callback) => {
+		const listener = () => callback();
+		ipcRenderer.on("app-focused", listener);
+		return () => ipcRenderer.removeListener("app-focused", listener);
+	},
 });
