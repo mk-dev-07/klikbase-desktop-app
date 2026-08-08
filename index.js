@@ -7,13 +7,18 @@ const {
 	screen,
 	systemPreferences,
 	Notification,
+	Tray,
+	nativeImage,
+	Menu,
 } = require("electron");
 const path = require("path");
 const { setupUpdater } = require("./updater");
 
 let mainWindow;
 let idleInterval;
+let tray = null;
 let isUserCurrentlyIdle = false;
+let isQuitting = false;
 const isDev = !app.isPackaged;
 
 function sendToMainWindow(channel, data) {
@@ -44,16 +49,21 @@ function createWindow() {
 	});
 
 	mainWindow.once("ready-to-show", () => {
-		mainWindow.show();
 		mainWindow.maximize();
+		mainWindow.show();
 	});
 
-	mainWindow.on("focus", () => {
-		sendToMainWindow("app-focused");
-	});
+	mainWindow.on("focus", () => sendToMainWindow("app-focused"));
+	mainWindow.on("restore", () => sendToMainWindow("app-focused"));
 
-	mainWindow.on("restore", () => {
-		sendToMainWindow("app-focused");
+	// ─── 2. Intercept Close Event (The Linux "Kill Switch" Logic) ─────────────
+	mainWindow.on("close", (event) => {
+		if (isQuitting) return;
+
+		if (process.platform !== "linux") {
+			event.preventDefault();
+			mainWindow.hide();
+		}
 	});
 
 	if (isDev) mainWindow.webContents.openDevTools();
@@ -72,10 +82,39 @@ function createWindow() {
 	});
 }
 
+function startIdlePolling() {
+	if (idleInterval) return;
+
+	idleInterval = setInterval(() => {
+		const idleTimeSeconds = powerMonitor.getSystemIdleTime();
+		if (idleTimeSeconds >= 300) {
+			if (!isUserCurrentlyIdle) {
+				isUserCurrentlyIdle = true;
+				sendToMainWindow("idle-break-started");
+			}
+		} else {
+			if (isUserCurrentlyIdle) {
+				isUserCurrentlyIdle = false;
+				sendToMainWindow("system-active-again");
+			}
+		}
+	}, 5000);
+}
+
 function cleanup() {
 	if (idleInterval) {
 		clearInterval(idleInterval);
 		idleInterval = null;
+	}
+}
+
+// ─── Linux Render Settings (X11 vs Wayland) ──────────────────────────────────
+if (process.platform === "linux") {
+	const isWayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
+	if (isWayland) {
+		app.disableHardwareAcceleration();
+		app.commandLine.appendSwitch("enable-features", "UseOzonePlatform");
+		app.commandLine.appendSwitch("ozone-platform", "wayland");
 	}
 }
 
@@ -87,7 +126,10 @@ if (!hasLock) {
 	app.on("second-instance", (event, commandLine, workingDirectory) => {
 		if (mainWindow) {
 			if (mainWindow.isMinimized()) mainWindow.restore();
+			mainWindow.show();
 			mainWindow.focus();
+		} else {
+			createWindow();
 		}
 	});
 
@@ -100,20 +142,104 @@ if (!hasLock) {
 			console.error("⚠️ Non-fatal auto-updater initialization check failed:", updaterError);
 		}
 
-		createWindow();
+		app.setAppUserModelId("com.factiiv.klikbase");
+		if (process.platform === "linux") {
+			app.setDesktopName("klikbase-tracker.desktop");
+		}
 
-		// ─── App Version Handler ─────────────────────────────────────────────────
-		ipcMain.handle("get-app-version", () => {
-			return app.getVersion();
+		createWindow();
+		startIdlePolling();
+
+		// ─── System Tray Setup ───────────────────────────────────────────────────
+		const iconPath = path.join(__dirname, "build", "icon.png");
+		const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
+
+		if (process.platform === "darwin") {
+			icon.setTemplateImage(true);
+		}
+
+		tray = new Tray(icon);
+		tray.setToolTip("Klikbase Time Tracker");
+
+		const contextMenu = Menu.buildFromTemplate([
+			{
+				label: "Open Klikbase",
+				click: () => {
+					if (mainWindow) {
+						if (mainWindow.isMinimized()) mainWindow.restore();
+						mainWindow.show();
+						mainWindow.focus();
+					} else {
+						createWindow();
+					}
+				},
+			},
+			{ type: "separator" },
+			{
+				label: "Quit",
+				click: () => {
+					isQuitting = true;
+					app.quit();
+				},
+			},
+		]);
+		tray.setContextMenu(contextMenu);
+
+		tray.on("click", () => {
+			if (mainWindow) {
+				if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+					mainWindow.focus();
+				} else {
+					if (mainWindow.isMinimized()) mainWindow.restore();
+					mainWindow.show();
+					mainWindow.focus();
+				}
+			} else {
+				createWindow();
+			}
 		});
 
-		// ─── Download File Handler ───────────────────────────────────────────────
+		// ─── Tray Timer & Taskbar IPC Listener ────────────────────────────────────
+		ipcMain.on("update-tray-timer", (event, { timeString, isBreak, isRunning }) => {
+			// console.log(`⏱️ Tick: ${timeString} | Running: ${isRunning} | Break: ${isBreak}`);
+
+			const iconPrefix = isBreak ? "☕ " : "⏱️ ";
+			const label = isBreak ? "Break" : "Work";
+
+			if (tray && !tray.isDestroyed()) {
+				if (!isRunning) {
+					if (process.platform === "darwin") tray.setTitle("");
+					tray.setToolTip("Klikbase - Stopped");
+				} else {
+					if (process.platform === "darwin") {
+						tray.setTitle(`${iconPrefix}${timeString}`);
+					} else {
+						tray.setToolTip(`Klikbase (${label}): ${timeString}`);
+					}
+				}
+			}
+
+			if (mainWindow && !mainWindow.isDestroyed()) {
+				if (!isRunning) {
+					mainWindow.setTitle("Klikbase");
+
+					mainWindow.setProgressBar(-1);
+				} else {
+					mainWindow.setTitle(`${timeString} - ${label} | Klikbase`);
+
+					mainWindow.setProgressBar(2, { mode: isBreak ? "paused" : "normal" });
+				}
+			}
+		});
+
+		// ─── Other IPC Handlers ──────────────────────────────────────────────────
+		ipcMain.handle("get-app-version", () => app.getVersion());
+
 		ipcMain.on("download-file", (event, url) => {
 			const win = BrowserWindow.fromWebContents(event.sender);
 			if (win) win.webContents.downloadURL(url);
 		});
 
-		// ─── Screenshot Handler with Permission Detection ─────────────────────────
 		ipcMain.handle("take-screenshot", async () => {
 			try {
 				if (process.platform === "linux") {
@@ -136,9 +262,6 @@ if (!hasLock) {
 							errorType: "permission_denied",
 							message: "Screen recording permission denied.",
 						};
-					}
-					if (!systemPreferences.isTrustedAccessibilityClient(false)) {
-						console.warn("⚠️ macOS Accessibility permission missing.");
 					}
 				}
 
@@ -166,64 +289,30 @@ if (!hasLock) {
 			}
 		});
 
-		// ─── Notification Handler (Fixed Mismatched Arguments & Callbacks) ──────────
 		ipcMain.on("show-notification", (event, title, body) => {
-			// Check if OS environment supports core notifications
 			if (!Notification.isSupported()) {
 				sendToMainWindow("notification-permission-denied", {
 					message: "System native alerts are unsupported on this platform environment.",
 				});
 				return;
 			}
-
 			try {
 				const notification = new Notification({ title, body });
-
-				// Optional: Handle system block scenarios if platform exposes them on creation failure
 				notification.show();
 			} catch (err) {
 				console.error("❌ Notification failed:", err);
-				sendToMainWindow("notification-permission-denied", {
-					message: "System notification failed to display. Check app permissions.",
-				});
 			}
 		});
 
-		// ─── Idle Time Handler ───────────────────────────────────────────────────────
-		ipcMain.handle("get-idle-time", () => {
-			return powerMonitor.getSystemIdleTime();
-		});
+		ipcMain.handle("get-idle-time", () => powerMonitor.getSystemIdleTime());
 
-		// ─── Break Event Handler ─────────────────────────────────────────────────────
 		ipcMain.on("break-event", (event, data) => {
 			console.log(`🔔 Break event: ${data.action}`);
 		});
 
-		// ─── System Events → Idle Break ─────────────────────────────────────────────
-		powerMonitor.on("suspend", () => {
-			sendToMainWindow("idle-break-started");
-		});
-		powerMonitor.on("lock-screen", () => {
-			sendToMainWindow("idle-break-started");
-		});
+		powerMonitor.on("suspend", () => sendToMainWindow("idle-break-started"));
+		powerMonitor.on("lock-screen", () => sendToMainWindow("idle-break-started"));
 
-		// ─── Idle Polling ───────────────────────────────────────────────────────────
-		idleInterval = setInterval(() => {
-			const idleTimeSeconds = powerMonitor.getSystemIdleTime();
-			if (idleTimeSeconds >= 300) {
-				if (!isUserCurrentlyIdle) {
-					isUserCurrentlyIdle = true;
-					sendToMainWindow("idle-break-started");
-				}
-			} else {
-				if (isUserCurrentlyIdle) {
-					isUserCurrentlyIdle = false;
-					sendToMainWindow("system-active-again");
-				}
-			}
-		}, 5000);
-
-		// ─── Google OAuth Window Handler (Fixed parsedUrl Reference Typo) ───────────
 		ipcMain.handle("open-google-auth-window", async (event, authUrl) => {
 			return new Promise((resolve) => {
 				let isResolved = false;
@@ -245,7 +334,7 @@ if (!hasLock) {
 						if (parsedUrl.searchParams.has("token")) {
 							if (!isResolved) {
 								isResolved = true;
-								resolve({ token: parsedUrl.searchParams.get("token") }); // FIXED TYPO HERE
+								resolve({ token: parsedUrl.searchParams.get("token") });
 								authWindow.close();
 							}
 						} else if (parsedUrl.searchParams.has("error")) {
@@ -260,12 +349,8 @@ if (!hasLock) {
 					} catch (err) {}
 				};
 
-				authWindow.webContents.on("will-redirect", (event, url) => {
-					handleNavigation(url);
-				});
-				authWindow.webContents.on("did-navigate", (event, url) => {
-					handleNavigation(url);
-				});
+				authWindow.webContents.on("will-redirect", (event, url) => handleNavigation(url));
+				authWindow.webContents.on("did-navigate", (event, url) => handleNavigation(url));
 				authWindow.on("closed", () => {
 					if (!isResolved) {
 						isResolved = true;
@@ -276,16 +361,22 @@ if (!hasLock) {
 		});
 
 		app.on("activate", () => {
-			if (BrowserWindow.getAllWindows().length === 0) createWindow();
+			if (BrowserWindow.getAllWindows().length === 0) {
+				createWindow();
+				startIdlePolling();
+			}
 		});
 	});
 }
 
-// Cleanup
+// ─── Cleanup & App Quit Handlers ─────────────────────────────────────────────
 app.on("window-all-closed", () => {
 	cleanup();
+
 	if (process.platform !== "darwin") app.quit();
 });
+
 app.on("before-quit", () => {
+	isQuitting = true;
 	cleanup();
 });

@@ -1,6 +1,6 @@
 {
 	"name": "klikbase-time-tracker",
-	"version": "1.1.6",
+	"version": "1.1.7",
 	"main": "index.js",
 	"scripts": {
 		"start": "electron .",
@@ -73,7 +73,8 @@
 				"AppImage",
 				"deb"
 			],
-			"icon": "build/icon.png"
+			"icon": "build/icon.png",
+			"executableName": "klikbase-tracker"
 		}
 	}
 }

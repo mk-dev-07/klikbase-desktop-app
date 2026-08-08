@@ -70,4 +70,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.on("app-focused", listener);
 		return () => ipcRenderer.removeListener("app-focused", listener);
 	},
+
+	/* ------------------- update system tray when time starts ------------------ */
+	updateTrayTimer: (data) => ipcRenderer.send("update-tray-timer", data),
 });
