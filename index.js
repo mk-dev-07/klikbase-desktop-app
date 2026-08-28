@@ -11,8 +11,12 @@ const {
 	nativeImage,
 	Menu,
 } = require("electron");
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const { NodeHttpHandler } = require("@smithy/node-http-handler");
+const https = require("https");
 const path = require("path");
 const { setupUpdater } = require("./updater");
+const envConfig = require("dotenv").config({ path: ".env.local" });
 
 let mainWindow;
 let idleInterval;
@@ -20,6 +24,10 @@ let tray = null;
 let isUserCurrentlyIdle = false;
 let isQuitting = false;
 const isDev = !app.isPackaged;
+
+if (envConfig.error) {
+	console.log("Failed to load env file");
+}
 
 function sendToMainWindow(channel, data) {
 	if (mainWindow && !mainWindow.isDestroyed()) {
@@ -100,6 +108,41 @@ function startIdlePolling() {
 		}
 	}, 5000);
 }
+
+let config = {};
+try {
+	config = require("./config.json");
+} catch (e) {
+	console.error("⚠️ config.json not found! Falling back to process.env.");
+}
+
+const ipv4Agent = new https.Agent({
+	family: 4,
+});
+
+const B2_ENDPOINT = config.B2_ENDPOINT || process.env.B2_ENDPOINT;
+const B2_BUCKET = config.B2_BUCKET || process.env.B2_BUCKET;
+const B2_KEY_ID = config.B2_KEY_ID || process.env.B2_KEY_ID;
+const B2_APPLICATION_KEY = config.B2_APPLICATION_KEY || process.env.B2_APPLICATION_KEY;
+
+if (!B2_ENDPOINT.startsWith("http")) {
+	B2_ENDPOINT = `https://${B2_ENDPOINT}`;
+}
+
+const b2Client = new S3Client({
+	region: B2_ENDPOINT ? B2_ENDPOINT.split(".")[1] : "us-east-005",
+	endpoint: B2_ENDPOINT,
+	forcePathStyle: true,
+	requestHandler: new NodeHttpHandler({
+		httpsAgent: ipv4Agent,
+		connectionTimeout: 10000,
+		socketTimeout: 10000,
+	}),
+	credentials: {
+		accessKeyId: B2_KEY_ID,
+		secretAccessKey: B2_APPLICATION_KEY,
+	},
+});
 
 function cleanup() {
 	if (idleInterval) {
@@ -201,8 +244,6 @@ if (!hasLock) {
 
 		// ─── Tray Timer & Taskbar IPC Listener ────────────────────────────────────
 		ipcMain.on("update-tray-timer", (event, { timeString, isBreak, isRunning }) => {
-			// console.log(`⏱️ Tick: ${timeString} | Running: ${isRunning} | Break: ${isBreak}`);
-
 			const iconPrefix = isBreak ? "☕ " : "⏱️ ";
 			const label = isBreak ? "Break" : "Work";
 
@@ -289,6 +330,51 @@ if (!hasLock) {
 			}
 		});
 
+		ipcMain.handle("upload-snapshot-to-b2", async (event, { base64Data, userId }) => {
+			try {
+				const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, "");
+				const buffer = Buffer.from(cleanBase64, "base64");
+
+				const fileName = `snapshots/${userId}/snap_${Date.now()}.jpg`;
+
+				const command = new PutObjectCommand({
+					Bucket: B2_BUCKET,
+					Key: fileName,
+					Body: buffer,
+					ContentType: "image/jpeg",
+				});
+
+				await b2Client.send(command);
+
+				const publicUrl = `https://${B2_BUCKET}.${B2_ENDPOINT.replace("https://", "")}/${fileName}`;
+
+				return { success: true, url: publicUrl };
+			} catch (error) {
+				console.error("❌ Backblaze B2 Upload Failed:", error);
+				return { success: false, error: error.message };
+			}
+		});
+
+		ipcMain.handle("delete-snapshot-from-b2", async (event, fileUrl) => {
+			try {
+				const urlObj = new URL(fileUrl);
+
+				const fileKey = urlObj.pathname.substring(1);
+
+				const command = new DeleteObjectCommand({
+					Bucket: B2_BUCKET,
+					Key: fileKey,
+				});
+
+				await b2Client.send(command);
+
+				return { success: true };
+			} catch (error) {
+				console.error("❌ Backblaze B2 Delete Failed:", error);
+				return { success: false, error: error.message };
+			}
+		});
+
 		ipcMain.on("show-notification", (event, title, body) => {
 			if (!Notification.isSupported()) {
 				sendToMainWindow("notification-permission-denied", {
@@ -346,7 +432,9 @@ if (!hasLock) {
 								authWindow.close();
 							}
 						}
-					} catch (err) {}
+					} catch (err) {
+						console.error("Auth URL Parse Error:", err);
+					}
 				};
 
 				authWindow.webContents.on("will-redirect", (event, url) => handleNavigation(url));

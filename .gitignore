@@ -12,6 +12,7 @@ node_modules
 node_modules/
 .env
 release
+config.json
 
 # Editor directories and files
 .vscode/*

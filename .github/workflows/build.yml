@@ -32,6 +32,17 @@ jobs:
             - name: Install Dependencies
               run: npm install
 
+            # ─── INJECT SECRETS INTO APP BUNDLE ──────────────────────────────
+            - name: Create Config File for B2 Secrets
+              shell: bash
+              run: |
+                  echo '{
+                    "B2_KEY_ID": "${{ secrets.B2_KEY_ID }}",
+                    "B2_APPLICATION_KEY": "${{ secrets.B2_APPLICATION_KEY }}",
+                    "B2_ENDPOINT": "${{ secrets.B2_ENDPOINT }}",
+                    "B2_BUCKET": "${{ secrets.B2_BUCKET }}"
+                  }' > config.json
+            # ─────────────────────────────────────────────────────────────────
             - name: Package & Publish Electron App
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -53,5 +64,6 @@ jobs:
                       release/*.dmg
                       release/*.deb
                       release/*.AppImage
+                      release/*.zip
                       release/*.yml
                   retention-days: 7

@@ -1,6 +1,6 @@
 {
 	"name": "klikbase-time-tracker",
-	"version": "1.1.7",
+	"version": "1.1.8",
 	"main": "index.js",
 	"scripts": {
 		"start": "electron .",
@@ -12,7 +12,10 @@
 	"license": "ISC",
 	"description": "Klikbase Time Tracking Client",
 	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1108.0",
+		"@smithy/node-http-handler": "^4.10.0",
 		"active-win": "^8.2.1",
+		"dotenv": "^17.4.2",
 		"electron-updater": "^6.8.9"
 	},
 	"devDependencies": {
@@ -32,6 +35,7 @@
 			"index.js",
 			"preload.cjs",
 			"updater.js",
+			"config.json",
 			"package.json",
 			"node_modules/**/*",
 			"dist/**/*"
@@ -49,6 +53,13 @@
 			"target": [
 				{
 					"target": "dmg",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				},
+				{
+					"target": "zip",
 					"arch": [
 						"x64",
 						"arm64"

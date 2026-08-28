@@ -73,4 +73,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
 	/* ------------------- update system tray when time starts ------------------ */
 	updateTrayTimer: (data) => ipcRenderer.send("update-tray-timer", data),
+
+	/* ----------------------------- Backblaze B2 ----------------------------- */
+	uploadSnapshotToB2: (data) => ipcRenderer.invoke("upload-snapshot-to-b2", data),
+	deleteSnapshotFromB2: (url) => ipcRenderer.invoke("delete-snapshot-from-b2", url),
 });
